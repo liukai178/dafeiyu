@@ -1,0 +1,23 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        run: ./build.sh
+
+      - name: Self test with mock DeepSeek
+        run: |
+          python3 Scripts/mock_deepseek.py 8765 &
+          sleep 1
+          DAFEIYU_HOME="$PWD/.build/ci" \
+          MOCK_DEEPSEEK_URL="http://127.0.0.1:8765" \
+          "build/大肥鱼.app/Contents/MacOS/DaFeiYu" --selftest
