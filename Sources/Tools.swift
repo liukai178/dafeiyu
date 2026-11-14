@@ -19,12 +19,16 @@ enum Safety {
 
     private static let rules: [(pattern: String, reason: String)] = [
         ("rm -rf", "会递归删除文件，且无法恢复"),
+        ("rm ", "会删除文件，可能无法恢复"),
         ("rm -fr", "会递归删除文件，且无法恢复"),
         ("rm -r ", "会递归删除文件"),
         ("diskutil", "磁盘分区/抹除操作，可能丢失数据"),
         ("dd if=", "裸写磁盘，可能破坏数据"),
         ("mkfs", "格式化磁盘，会丢失数据"),
         ("sudo ", "需要管理员权限，可能修改系统"),
+        ("mv ", "会移动/覆盖文件"),
+        ("truncate", "会清空文件内容"),
+        ("shred", "会彻底擦除文件"),
         ("shutdown", "会关机或重启"),
         ("reboot", "会重启电脑"),
         ("halt", "会关机"),
@@ -350,10 +354,14 @@ enum ToolExecutor {
             guard ok else { return "用户拒绝写入 \(full)" }
         }
         let url = URL(fileURLWithPath: full)
+        let append = (args["append"] as? Bool) ?? false
+        if FileManager.default.fileExists(atPath: full), !append {
+            let ok = Safety.confirm(title: "肥鱼想覆盖一个已有文件", detail: full)
+            guard ok else { return "用户拒绝覆盖 \(full)" }
+        }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            let append = (args["append"] as? Bool) ?? false
             if append, FileManager.default.fileExists(atPath: full) {
                 let handle = try FileHandle(forWritingTo: url)
                 handle.seekToEndOfFile()
