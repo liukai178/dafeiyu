@@ -21,8 +21,31 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var finished = true
     private var levelGate = Date.distantPast
     private let synthesizer = AVSpeechSynthesizer()
+    private var pendingUtterances = 0
     private(set) var isListening = false
     private(set) var isSpeaking = false
+
+    /// 系统里最像“萌妹子”的中文女声；优先婷婷，其次 Siri 雨舒等。
+    private lazy var preferredVoice: AVSpeechSynthesisVoice? = {
+        // 明确指定“婷婷”，系统里最自然的中文女声；Siri 雨舒做备选。
+        for identifier in [
+            "com.apple.voice.compact.zh-CN.Tingting",
+            "com.apple.ttsbundle.siri_yushu_zh-CN_compact"
+        ] {
+            if let voice = AVSpeechSynthesisVoice(identifier: identifier) {
+                return voice
+            }
+        }
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language == "zh-CN" || $0.language.hasPrefix("zh-CN") }
+        for name in ["Tingting", "Yu-shu", "Shelley", "Sandy", "Flo", "Meijia"] {
+            let matches = voices.filter { $0.name.hasPrefix(name) }
+            if let best = matches.max(by: { $0.quality.rawValue < $1.quality.rawValue }) {
+                return best
+            }
+        }
+        return voices.first ?? AVSpeechSynthesisVoice(language: "zh-CN")
+    }()
 
     override init() {
         super.init()
@@ -194,28 +217,117 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
 
     // MARK: - Speaking
 
-    func speak(_ text: String, persona: Persona) {
+    func speak(_ text: String, persona: Persona, mood: Mood = .idle) {
         stopSpeaking()
         let clean = SpeechController.cleanForSpeech(text)
         guard !clean.isEmpty else { return }
-        let utterance = AVSpeechUtterance(string: clean)
-        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        utterance.pitchMultiplier = Float(min(2.0, max(0.5, persona.voicePitch)))
-        utterance.rate = Float(min(0.6, max(0.35, persona.voiceRate)))
-        utterance.preUtteranceDelay = 0.02
+        let chunks = SpeechController.chunks(clean)
+        guard !chunks.isEmpty else { return }
+
         isSpeaking = true
+        pendingUtterances = chunks.count
+        Store.shared.audit("tts voice=\(preferredVoice?.name ?? "nil") id=\(preferredVoice?.identifier ?? "-") chunks=\(chunks.count)")
         onSpeakStart?()
-        synthesizer.speak(utterance)
+
+        for (index, chunk) in chunks.enumerated() {
+            let utterance = AVSpeechUtterance(string: chunk)
+            utterance.voice = preferredVoice ?? AVSpeechSynthesisVoice(language: "zh-CN")
+            let prosody = SpeechController.prosody(for: chunk, mood: mood, index: index)
+            utterance.pitchMultiplier = Float(min(1.9, max(0.65, persona.voicePitch + prosody.pitch)))
+            utterance.rate = Float(min(0.62, max(0.34, persona.voiceRate + prosody.rate)))
+            utterance.volume = 0.96
+            utterance.preUtteranceDelay = index == 0 ? 0.02 : 0.06
+            utterance.postUtteranceDelay = prosody.pause
+            synthesizer.speak(utterance)
+        }
     }
 
     func stopSpeaking() {
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
+        pendingUtterances = 0
         if isSpeaking {
             isSpeaking = false
             onSpeakEnd?()
         }
+    }
+
+    private struct Prosody {
+        var pitch: Double = 0
+        var rate: Double = 0
+        var pause: Double = 0.02
+    }
+
+    private static func prosody(for chunk: String, mood: Mood, index: Int) -> Prosody {
+        var p = Prosody()
+        if chunk.contains("！") || chunk.contains("!") {
+            p.pitch += 0.06; p.rate += 0.012
+        }
+        if chunk.contains("？") || chunk.contains("?") {
+            p.pitch += 0.04; p.rate -= 0.004
+        }
+        if chunk.contains("…") || chunk.contains("...") {
+            p.pitch -= 0.02; p.rate -= 0.03; p.pause += 0.08
+        }
+        if chunk.contains("，") || chunk.contains(",") {
+            p.pause += 0.03
+        }
+        let soft = ["呜", "对不起", "别", "难过", "累", "哭", "疼"]
+        let sharp = ["哼", "才不", "笨蛋", "讨厌", "随便", "略"]
+        if soft.contains(where: { chunk.contains($0) }) {
+            p.pitch -= 0.04; p.rate -= 0.03
+        }
+        if sharp.contains(where: { chunk.contains($0) }) {
+            p.pitch += 0.045; p.rate += 0.015
+        }
+        switch mood {
+        case .happy: p.pitch += 0.05; p.rate += 0.01
+        case .shy: p.pitch -= 0.025; p.rate -= 0.015
+        case .pouty: p.pitch += 0.035
+        case .sleepy: p.pitch -= 0.08; p.rate -= 0.05
+        case .surprised: p.pitch += 0.06
+        default: break
+        }
+        // 轻微的逐句起伏，避免像播报
+        p.pitch += sin(Double(index) * 1.7) * 0.012
+        return p
+    }
+
+    /// 按标点切成短句；太长的再按逗号切，念起来更像活人。
+    static func chunks(_ text: String) -> [String] {
+        var raw: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if "。！？!?；;\n".contains(ch) {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { raw.append(trimmed) }
+                current = ""
+            }
+        }
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty { raw.append(tail) }
+
+        var out: [String] = []
+        for piece in raw {
+            if piece.count <= 46 {
+                out.append(piece)
+            } else {
+                var buffer = ""
+                for ch in piece {
+                    buffer.append(ch)
+                    if "，,、".contains(ch) && buffer.count >= 24 {
+                        out.append(buffer.trimmingCharacters(in: .whitespacesAndNewlines))
+                        buffer = ""
+                    }
+                }
+                if !buffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    out.append(buffer.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            }
+        }
+        return out.filter { !$0.isEmpty }
     }
 
     static func cleanForSpeech(_ text: String) -> String {
@@ -230,11 +342,14 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        pendingUtterances = max(0, pendingUtterances - 1)
+        guard pendingUtterances == 0 else { return }
         isSpeaking = false
         DispatchQueue.main.async { self.onSpeakEnd?() }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        pendingUtterances = 0
         isSpeaking = false
         DispatchQueue.main.async { self.onSpeakEnd?() }
     }

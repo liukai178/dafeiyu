@@ -524,7 +524,7 @@ private struct PersonaPane: View {
 
                 HStack(spacing: 10) {
                     FieldLabel(text: "配色")
-                    Text("身体").font(.system(size: 10, design: .rounded)).foregroundColor(Theme.ink.opacity(0.45))
+                    Text("发色").font(.system(size: 10, design: .rounded)).foregroundColor(Theme.ink.opacity(0.45))
                     ColorPicker("", selection: Binding(
                         get: { Color(hex: model.persona.bodyHex) },
                         set: { model.persona.bodyHex = $0.hexString }
@@ -556,6 +556,14 @@ private struct PersonaPane: View {
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(Theme.ink.opacity(0.4))
                     Spacer()
+                    Button("试听") {
+                        SpeechController.shared.stopSpeaking()
+                        SpeechController.shared.speak("哼，我是吃白饭的蓝色大肥鱼，才、才不是特意等你的。",
+                                                      persona: model.persona, mood: .happy)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, design: .rounded))
+                    .foregroundColor(Theme.accentFallback)
                     Button("恢复默认傲娇") { model.resetPersona() }
                         .buttonStyle(.plain)
                         .font(.system(size: 11, design: .rounded))
@@ -983,7 +991,7 @@ private struct AboutPane: View {
                     Text("大肥鱼")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(Theme.ink)
-                    Text("版本 1.0.0 · Swift 原生桌宠")
+                    Text("版本 1.1.0 · Swift 原生桌宠")
                         .font(.system(size: 11, design: .rounded))
                         .foregroundColor(Theme.ink.opacity(0.45))
                 }

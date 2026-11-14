@@ -16,8 +16,8 @@ enum SnapshotTool {
             RoundedRectangle(cornerRadius: 220, style: .continuous)
                 .stroke(Color.white.opacity(0.55), lineWidth: 10)
             PetView(state: state)
-                .scaleEffect(3.35)
-                .offset(y: 18)
+                .scaleEffect(2.8)
+                .offset(y: -8)
         }
         .frame(width: 1024, height: 1024)
         let renderer = ImageRenderer(content: content)
@@ -44,14 +44,14 @@ enum SnapshotTool {
         state.snapshotMode = true
 
         let view = PetView(state: state)
-            .frame(width: 240, height: 240)
+            .frame(width: 280, height: 320)
             .background(
                 LinearGradient(colors: [Color(hex: "#FFF7EC"), Color(hex: "#F3E7DA")],
                                startPoint: .top, endPoint: .bottom)
             )
 
         let renderer = ImageRenderer(content: view)
-        renderer.scale = 3
+        renderer.scale = 2.5
         guard let cg = renderer.cgImage else {
             FileHandle.standardError.write(Data("render failed\n".utf8))
             return 1

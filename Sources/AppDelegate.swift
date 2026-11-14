@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var petPanel: PetPanel!
     private var bubblePanel: BubblePanel!
+    private var answerPanel: AnswerPanel!
     private var inputPanel: InputPanel!
     private var statusItem: NSStatusItem!
     private var togglePetItem: NSMenuItem!
@@ -22,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dragStartMouse: NSPoint?
     private var lastInteraction = Date()
     private var lastAskWasVoice = false
+    private var askWatchdog: DispatchWorkItem?
 
     private var petHidden = false
     private let originKey = "DaFeiYu.petOrigin"
@@ -44,6 +46,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Scheduler.shared.start()
         layoutPanels()
         greet()
+        if let idx = CommandLine.arguments.firstIndex(of: "--chat-test"),
+           idx + 1 < CommandLine.arguments.count {
+            let question = CommandLine.arguments[idx + 1]
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.ask(question, viaVoice: false)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 24) { [weak self] in
+                guard let self else { return }
+                print("CHAT_RESULT: \(self.state.bubbleText)")
+                print("CHAT_THINKING: \(self.state.thinking)")
+                self.showAnswer()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    self.snapshot(view: self.answerPanel.contentView, path: "/tmp/answer.png")
+                    self.snapshot(view: self.bubblePanel.contentView, path: "/tmp/bubble-reply.png")
+                    self.snapshot(view: self.petPanel.contentView, path: "/tmp/pet-reply.png")
+                    NSApp.terminate(nil)
+                }
+            }
+        }
         if let idx = CommandLine.arguments.firstIndex(of: "--ui-snapshot"),
            idx + 1 < CommandLine.arguments.count {
             let dir = CommandLine.arguments[idx + 1]
@@ -112,14 +133,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupPanels() {
         petPanel = PetPanel()
         let petHost = NSHostingView(rootView: PetView(state: state))
-        petHost.frame = NSRect(x: 0, y: 0, width: 240, height: 240)
+        petHost.frame = NSRect(x: 0, y: 0, width: 280, height: 320)
         petPanel.contentView = petHost
 
         let saved = UserDefaults.standard.string(forKey: originKey).map(NSPointFromString)
         petPanel.setFrameOrigin(clampOrigin(saved ?? defaultOrigin()))
         petPanel.orderFrontRegardless()
 
-        bubblePanel = BubblePanel()
+        bubblePanel = BubblePanel(onTap: { [weak self] in self?.showAnswer() })
+        answerPanel = AnswerPanel()
 
         inputPanel = InputPanel(
             state: state,
@@ -247,7 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.state.showBubble("【\(title)】\(text)", autoHide: 30)
             self.state.setMood(.happy, revertAfter: 4)
             if (info["speak"] as? Bool) == true || Store.shared.config.voiceReplies {
-                SpeechController.shared.speak(text, persona: self.state.persona)
+                SpeechController.shared.speak(text, persona: self.state.persona, mood: .happy)
             }
         }
         NotificationCenter.default.addObserver(
@@ -310,6 +332,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         agent.onError = { [weak self] message in
             guard let self else { return }
+            self.askWatchdog?.cancel()
+            Store.shared.audit("chat error: \(message.prefix(160))")
             self.state.thinking = false
             self.state.toolNote = nil
             self.state.showBubble("唔……\(message)", autoHide: 9)
@@ -425,11 +449,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func defaultOrigin() -> NSPoint {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return NSPoint(x: 100, y: 100) }
         let vf = screen.visibleFrame
-        return NSPoint(x: vf.maxX - 240 - 26, y: vf.minY + 18)
+        return NSPoint(x: vf.maxX - 280 - 26, y: vf.minY + 16)
     }
 
     private func clampOrigin(_ origin: NSPoint) -> NSPoint {
-        let size = NSSize(width: 240, height: 240)
+        let size = NSSize(width: 280, height: 320)
         let frame = NSRect(origin: origin, size: size)
         let screen = NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main ?? NSScreen.screens[0]
         let vf = screen.visibleFrame
@@ -464,6 +488,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var by = anchorY + 6
         by = min(by, vf.maxY - bh - 6)
         bubblePanel.setFrameOrigin(NSPoint(x: bx, y: by))
+
+        if answerPanel != nil && answerPanel.isVisible {
+            let aw: CGFloat = 420, ah: CGFloat = 400
+            var ax = pf.minX - aw - 12
+            if ax < vf.minX + 8 {
+                ax = min(max(pf.midX - aw / 2, vf.minX + 8), vf.maxX - aw - 8)
+            }
+            var ay = pf.midY - ah / 2
+            ay = min(max(ay, vf.minY + 8), vf.maxY - ah - 8)
+            answerPanel.setFrameOrigin(NSPoint(x: ax, y: ay))
+        }
+    }
+
+    func showAnswer() {
+        let text = state.bubbleText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        answerPanel.show(text: text, accent: state.persona.accentColor) { [weak self] in
+            self?.answerPanel.orderOut(nil)
+        }
+        layoutPanels()
     }
 
     // MARK: - Bubble / input
@@ -474,6 +518,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             bubblePanel.update(text: state.bubbleText, accent: state.persona.accentColor)
             if !petHidden {
                 bubblePanel.orderFrontRegardless()
+            }
+            if answerPanel.isVisible {
+                answerPanel.update(text: state.bubbleText, accent: state.persona.accentColor)
             }
         } else {
             bubblePanel.orderOut(nil)
@@ -575,6 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if petHidden {
             petPanel.orderOut(nil)
             bubblePanel.orderOut(nil)
+            answerPanel.orderOut(nil)
             hideInput()
         } else {
             petPanel.orderFrontRegardless()
@@ -600,14 +648,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         lastAskWasVoice = viaVoice
         Store.shared.appendHistory(ChatTurn(role: "user", text: trimmed, viaVoice: viaVoice))
+        Store.shared.audit("chat user: \(trimmed.prefix(120))")
+        askWatchdog?.cancel()
+        let watchdog = DispatchWorkItem { [weak self] in
+            guard let self, self.state.thinking else { return }
+            AgentController.shared.cancel()
+            self.state.thinking = false
+            self.state.setMood(.pouty, revertAfter: 3)
+            self.state.showBubble("这次想太久了，卡住啦……再试一次？", autoHide: 8)
+            Store.shared.audit("chat watchdog timeout")
+        }
+        askWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now() + 80, execute: watchdog)
         state.thinking = true
         state.setMood(.thinking)
-        state.bubbleText = ""
+        state.bubbleText = "……"
         state.bubbleVisible = true
         AgentController.shared.send(text: trimmed, viaVoice: viaVoice)
     }
 
     func finishChat(text: String, viaVoice: Bool) {
+        askWatchdog?.cancel()
+        Store.shared.audit("chat assistant: \(text.prefix(120))")
         state.thinking = false
         state.toolNote = nil
         state.bubbleText = text
@@ -616,7 +678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.setMood(.happy, revertAfter: 2.5)
         Store.shared.appendHistory(ChatTurn(role: "assistant", text: text))
         if Store.shared.config.voiceReplies || viaVoice {
-            SpeechController.shared.speak(text, persona: state.persona)
+            SpeechController.shared.speak(text, persona: state.persona, mood: state.mood)
         }
     }
 

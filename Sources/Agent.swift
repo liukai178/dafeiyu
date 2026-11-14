@@ -11,17 +11,22 @@ final class AgentController {
 
     private(set) var busy = false
     private var token = 0
+    private var startedAt: Date?
     private var client: DeepSeekClient?
     private let queue = DispatchQueue(label: "com.liukai.dafeiyu.agent", qos: .userInitiated)
 
     // MARK: - Public
 
     func send(text: String, viaVoice: Bool) {
-        guard !busy else {
-            onError?("等我把上一句想完。")
-            return
+        if busy {
+            if let startedAt, Date().timeIntervalSince(startedAt) < 55 {
+                onError?("等我把上一句想完。")
+                return
+            }
+            cancel()
         }
         busy = true
+        startedAt = Date()
         token += 1
         let current = token
         DispatchQueue.main.async { self.onStart?() }
@@ -32,6 +37,7 @@ final class AgentController {
                 guard self.token == current else { return }
                 self.busy = false
                 self.client = nil
+                self.startedAt = nil
                 switch result {
                 case .success(let reply):
                     self.onFinish?(reply)
@@ -44,11 +50,15 @@ final class AgentController {
     }
 
     func runAutomation(_ task: TaskSpec, completion: @escaping (Result<String, DeepSeekError>) -> Void) {
-        guard !busy else {
-            completion(.failure(DeepSeekError(message: "正在忙别的")))
-            return
+        if busy {
+            if let startedAt, Date().timeIntervalSince(startedAt) < 55 {
+                completion(.failure(DeepSeekError(message: "正在忙别的")))
+                return
+            }
+            cancel()
         }
         busy = true
+        startedAt = Date()
         token += 1
         let current = token
         queue.async { [weak self] in
@@ -63,6 +73,7 @@ final class AgentController {
             DispatchQueue.main.async {
                 self.busy = false
                 self.client = nil
+                self.startedAt = nil
                 completion(result)
             }
         }
@@ -72,6 +83,7 @@ final class AgentController {
         token += 1
         client?.cancel()
         busy = false
+        startedAt = nil
     }
 
     // MARK: - Loop
@@ -239,7 +251,7 @@ final class AgentController {
         let recent = history.suffix(8).map { turn in
             "\(turn.role == "user" ? "用户" : "肥鱼")：\(turn.text)"
         }.joined(separator: "\n")
-        queue.async {
+        DispatchQueue.global(qos: .utility).async {
             let client = DeepSeekClient(apiKey: key, baseURL: config.baseURL, model: config.model)
             let prompt = """
             从下面这段对话里提取关于“用户本人”的、长期稳定的事实（身份、偏好、习惯、重要关系、正在进行的目标）。
