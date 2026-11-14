@@ -14,6 +14,8 @@ sleep 0.5
 echo "▸ 安装到 $DEST …"
 rm -rf "$DEST"
 ditto "build/$APP_NAME.app" "$DEST"
+xattr -cr "$DEST" 2>/dev/null || true
+codesign --force --deep --sign - --identifier com.liukai.dafeiyu "$DEST" >/dev/null 2>&1 || true
 
 echo "▸ 启动…"
 open "$DEST"

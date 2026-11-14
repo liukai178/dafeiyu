@@ -89,11 +89,12 @@ open "build/大肥鱼.app"
 ## 性能设计
 
 - 纯原生 Swift + SwiftUI，无 Electron / WebView。
-- 动画帧率自适应：活跃 ≤15fps，闲置 3.5fps，系统睡眠 0.5fps。
+- 动画帧率自适应：交互 8fps、环境 3.3fps、闲置 1.3fps，系统睡眠时停止重绘。
 - 90~600 秒无输入自动进入睡眠表情并降帧；鼠标/键盘一有动静立刻醒。
 - 监听 `willSleep / screensDidSleep / sessionDidResignActive`，睡眠时暂停调度器与语音。
 - 全局只有 1 个 30 秒定时器（tolerance 12s）+ 1 个 5 秒空闲检测；无轮询、无忙等。
 - 对话走 SSE 流式，工具调用按需执行；空闲时零网络请求。
+- 实测（M1 MacBook Pro，未悬停）：约 **0.4% CPU / 22MB 内存**；悬停出现输入框时约 1.5%。
 
 ## 结构
 

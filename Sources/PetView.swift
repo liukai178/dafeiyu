@@ -8,20 +8,23 @@ struct PetView: View {
     @State private var dragging = false
 
     private var interval: Double {
-        if state.systemAsleep { return 2.0 }
-        if state.mood == .sleepy { return 0.5 }
-        if state.idle { return 0.28 }
-        if state.listening { return 0.08 }
-        if state.speaking { return 0.06 }
-        return 0.066
+        if state.idle || state.mood == .sleepy { return 0.75 }       // ~1.3 fps
+        if state.listening || state.speaking { return 0.12 }         // ~8 fps（口型/波形）
+        return 0.3                                                   // ~3.3 fps 环境动画
     }
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: interval)) { context in
-            PetCanvas(
-                state: state,
-                t: context.date.timeIntervalSinceReferenceDate
-            )
+        Group {
+            if state.systemAsleep {
+                PetCanvas(state: state, t: 0)
+            } else {
+                TimelineView(.periodic(from: .now, by: interval)) { context in
+                    PetCanvas(
+                        state: state,
+                        t: context.date.timeIntervalSinceReferenceDate
+                    )
+                }
+            }
         }
         .frame(width: 240, height: 240)
         .contentShape(Rectangle())
@@ -105,9 +108,13 @@ private struct PetCanvas: View {
         ZStack {
             // 地面阴影
             Ellipse()
-                .fill(Color.black.opacity(state.systemAsleep ? 0.07 : 0.14))
-                .frame(width: 116, height: 14)
-                .blur(radius: 5)
+                .fill(
+                    RadialGradient(
+                        colors: [Color.black.opacity(state.systemAsleep ? 0.05 : 0.13), Color.black.opacity(0)],
+                        center: .center, startRadius: 2, endRadius: 58
+                    )
+                )
+                .frame(width: 120, height: 18)
                 .position(x: 132, y: 212)
 
             if state.listening || state.thinking {
@@ -147,7 +154,6 @@ private struct PetCanvas: View {
                 Ellipse()
                     .fill(persona.bellyColor.opacity(0.92))
                     .frame(width: 92, height: 56)
-                    .blur(radius: 0.6)
                     .position(x: 140, y: 165)
 
                 // 胸鳍
@@ -341,14 +347,22 @@ private struct FishFace: View {
         ZStack {
             // 腮红
             Ellipse()
-                .fill(persona.accentColor.opacity(blushOpacity))
-                .frame(width: 18, height: 9)
-                .blur(radius: 1.6)
+                .fill(
+                    RadialGradient(
+                        colors: [persona.accentColor.opacity(blushOpacity), persona.accentColor.opacity(0)],
+                        center: .center, startRadius: 1, endRadius: 9
+                    )
+                )
+                .frame(width: 20, height: 11)
                 .position(x: 78, y: 68)
             Ellipse()
-                .fill(persona.accentColor.opacity(blushOpacity))
-                .frame(width: 15, height: 8)
-                .blur(radius: 1.4)
+                .fill(
+                    RadialGradient(
+                        colors: [persona.accentColor.opacity(blushOpacity), persona.accentColor.opacity(0)],
+                        center: .center, startRadius: 1, endRadius: 8
+                    )
+                )
+                .frame(width: 17, height: 10)
                 .position(x: 124, y: 65)
 
             // 眼睛
