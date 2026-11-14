@@ -20,6 +20,8 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     private var transcript = ""
     private var finished = true
     private var levelGate = Date.distantPast
+    private var silenceWork: DispatchWorkItem?
+    private var maxListenWork: DispatchWorkItem?
     private let synthesizer = AVSpeechSynthesizer()
     private var pendingUtterances = 0
     private(set) var isListening = false
@@ -124,12 +126,25 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         }
 
         isListening = true
+        maxListenWork?.cancel()
+        let maxWork = DispatchWorkItem { [weak self] in
+            guard let self, self.isListening else { return }
+            if self.transcript.isEmpty { self.cancel() } else { self.finish() }
+        }
+        maxListenWork = maxWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + 45, execute: maxWork)
+
         task = rec.recognitionTask(with: req) { [weak self] result, error in
             guard let self else { return }
             if let result {
                 let text = result.bestTranscription.formattedString
                 self.transcript = text
-                DispatchQueue.main.async { self.onPartial?(text) }
+                DispatchQueue.main.async {
+                    self.onPartial?(text)
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.scheduleSilenceFinish()
+                    }
+                }
                 if result.isFinal {
                     self.deliverFinal(text)
                 }
@@ -147,9 +162,22 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
         }
     }
 
+    private func scheduleSilenceFinish() {
+        guard isListening else { return }
+        silenceWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isListening else { return }
+            self.finish()
+        }
+        silenceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
+    }
+
     func finish() {
         guard isListening else { return }
         isListening = false
+        silenceWork?.cancel()
+        maxListenWork?.cancel()
         request?.endAudio()
         stopEngine()
         let text = transcript
@@ -161,6 +189,8 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     func cancel() {
         isListening = false
         finished = true
+        silenceWork?.cancel()
+        maxListenWork?.cancel()
         cleanupAudio()
     }
 
@@ -180,6 +210,8 @@ final class SpeechController: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func cleanupAudio() {
+        silenceWork?.cancel()
+        maxListenWork?.cancel()
         stopEngine()
         transcript = ""
     }
